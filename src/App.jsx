@@ -452,8 +452,18 @@ function LoginScreen({ onLogin, users }) {
   return (
     <div className="h-screen bg-slate-900 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-        <div className="bg-blue-600 p-8 text-center">
-          <Database size={48} className="text-white mx-auto mb-4" />
+        <div className="bg-blue-600 p-8 text-center flex flex-col items-center">
+          
+          <img 
+            src="/logo-argos.png" 
+            alt="Logo Corporativo" 
+            className="h-24 mb-4 object-contain"
+            onError={(e) => {
+              e.target.onerror = null; 
+              e.target.style.display = 'none'; 
+            }}
+          />
+          
           <h1 className="text-3xl font-bold text-white tracking-tight">ARGOS</h1>
           <p className="text-blue-100 mt-1">Plataforma de Gestión Inteligente</p>
         </div>
