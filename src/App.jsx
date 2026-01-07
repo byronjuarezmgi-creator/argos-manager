@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-// CORRECCIÓN: Se eliminó la importación errónea de signInAnonymously desde firestore
 import { 
   getFirestore, collection, doc, onSnapshot, 
   addDoc, updateDoc, deleteDoc 
@@ -13,22 +12,8 @@ import {
   User, X, Send, Database, AlertCircle, Settings
 } from 'lucide-react';
 
-// --- CONFIGURACIÓN DE FIREBASE (AQUÍ PEGARÁS TUS LLAVES) ---
-// INSTRUCCIONES:
-// 1. Ve a https://console.firebase.google.com/
-// 2. Entra a tu proyecto > Configuración del proyecto (engranaje).
-// 3. Baja hasta "Tus apps" > SDK setup y configuración.
-// 4. Copia el contenido dentro de firebaseConfig y reemplaza las líneas de abajo.
-
-const firebaseConfig = {
-  // Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+// --- CONFIGURACIÓN DE FIREBASE ---
+// Ya he puesto tus claves aquí correctamente. No pegues nada más.
 const firebaseConfig = {
   apiKey: "AIzaSyC5p3Hs08DRmoZ-TORtAOdyO7NYoU5PsDY",
   authDomain: "argos-solution.firebaseapp.com",
@@ -39,13 +24,7 @@ const firebaseConfig = {
   measurementId: "G-T2MBMQ769S"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
-};
-
 // --- VALIDACIÓN DE CONFIGURACIÓN ---
-// Esto verifica si ya pusiste tus llaves reales antes de intentar conectar
 const isConfigured = firebaseConfig.apiKey !== "TU_API_KEY_AQUI";
 
 let app, auth, db;
@@ -76,7 +55,6 @@ const COLORS = {
 
 // --- COMPONENTE PRINCIPAL ---
 export default function App() {
-  // Si no está configurado, mostrar pantalla de instrucciones
   if (!isConfigured) {
     return <ConfigInstructions />;
   }
@@ -95,7 +73,6 @@ export default function App() {
     
     signInAnonymously(auth).catch((err) => {
       console.error("Error Auth:", err);
-      // Mensaje amigable si falla la API Key aunque no sea la por defecto
       if (err.code === 'auth/api-key-not-valid') {
         setError("La API Key ingresada no es válida. Verifica que la copiaste correctamente de Firebase.");
       } else {
@@ -111,22 +88,16 @@ export default function App() {
   useEffect(() => {
     if (!user || !db) return;
 
-    // Ruta de la base de datos
     const q = collection(db, 'argos_data', appId, 'boards');
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const loadedBoards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
-      // Ordenar por fecha
       loadedBoards.sort((a, b) => a.createdAt - b.createdAt);
-      
       setBoards(loadedBoards);
       
-      // Si hay tableros y no tenemos uno seleccionado, seleccionar el primero
       if (!activeBoardId && loadedBoards.length > 0) {
         setActiveBoardId(loadedBoards[0].id);
       }
-      
       setLoading(false);
     }, (err) => {
       console.error("Error cargando tableros:", err);
@@ -155,7 +126,7 @@ export default function App() {
         { id: 'col_date', title: 'Fecha', type: 'date', width: 'w-32' },
         { id: 'col_resp', title: 'Responsable', type: 'text', width: 'w-40' },
       ],
-      rows: [] // Empieza vacío
+      rows: [] 
     };
     try {
       await addDoc(collection(db, 'argos_data', appId, 'boards'), newBoard);
@@ -383,29 +354,11 @@ function ConfigInstructions() {
           <div className="space-y-4">
             <h3 className="font-bold text-gray-800 text-lg">Pasos para activar:</h3>
             <ol className="list-decimal list-inside space-y-3 text-gray-600">
-              <li>Ve a la consola de Firebase: <a href="https://console.firebase.google.com" target="_blank" className="text-blue-600 underline">console.firebase.google.com</a></li>
-              <li>Entra a tu proyecto (o crea uno nuevo).</li>
-              <li>Haz clic en el <strong>Engranaje ⚙️</strong> (arriba izquierda) &gt; Configuración del proyecto.</li>
-              <li>Baja hasta la sección <strong>"Tus apps"</strong>.</li>
-              <li>Copia el bloque de código que dice <code>const firebaseConfig = ...</code>.</li>
-              <li>Abre el archivo <code>src/App.jsx</code> en tu editor.</li>
-              <li>Pega tus claves en la sección superior (líneas 24-30).</li>
+              <li>Ve a la consola de Firebase.</li>
+              <li>Copia SOLO las claves (apiKey, authDomain, etc).</li>
+              <li>Pégalas en el archivo <code>src/App.jsx</code> (Líneas 19-24).</li>
             </ol>
           </div>
-
-          <div className="bg-slate-100 p-4 rounded-lg font-mono text-xs text-slate-600 overflow-x-auto">
-            <p className="mb-2 font-bold text-slate-800">// Ejemplo de cómo debe verse tu código:</p>
-            <pre>{`const firebaseConfig = {
-  apiKey: "AIzaSyD-EjemploRealDeClave...",
-  authDomain: "argos-app.firebaseapp.com",
-  projectId: "argos-app",
-  ...
-};`}</pre>
-          </div>
-        </div>
-        
-        <div className="p-6 bg-gray-50 border-t text-center">
-          <p className="text-gray-500 text-sm">Una vez guardes el archivo con los datos reales, esta pantalla desaparecerá automáticamente.</p>
         </div>
       </div>
     </div>
