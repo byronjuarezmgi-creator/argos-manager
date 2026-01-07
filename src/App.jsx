@@ -9,11 +9,10 @@ import {
 } from 'firebase/auth';
 import { 
   Plus, MessageSquare, Trash2, Layout, 
-  User, X, Send, Database, AlertCircle, Settings
+  User, X, Send, Database, AlertCircle, Settings, Lock, Unlock
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN DE FIREBASE ---
-// Ya he puesto tus claves aquí correctamente. No pegues nada más.
 const firebaseConfig = {
   apiKey: "AIzaSyC5p3Hs08DRmoZ-TORtAOdyO7NYoU5PsDY",
   authDomain: "argos-solution.firebaseapp.com",
@@ -62,7 +61,10 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [boards, setBoards] = useState([]);
   const [activeBoardId, setActiveBoardId] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(true); 
+  
+  // CAMBIO: Ahora empieza como falso (Cliente) por defecto
+  const [isAdmin, setIsAdmin] = useState(false); 
+  
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeCommentRow, setActiveCommentRow] = useState(null);
@@ -102,7 +104,7 @@ export default function App() {
     }, (err) => {
       console.error("Error cargando tableros:", err);
       if (err.code === 'permission-denied') {
-        setError("Permiso denegado: Verifica las reglas de seguridad de Firestore (deben estar en modo prueba).");
+        setError("Permiso denegado: Verifica las reglas de seguridad de Firestore.");
       } else {
         setError("Error de conexión: " + err.message);
       }
@@ -111,6 +113,24 @@ export default function App() {
 
     return () => unsubscribe();
   }, [user]);
+
+  // --- NUEVA FUNCIÓN DE SEGURIDAD ---
+  const handleRoleSwitch = () => {
+    if (isAdmin) {
+      // Si ya es admin, puede salir libremente
+      setIsAdmin(false);
+    } else {
+      // Si quiere entrar, pide contraseña
+      const password = prompt("🔐 Ingrese la contraseña de Administrador:");
+      
+      // AQUÍ PUEDES CAMBIAR LA CONTRASEÑA
+      if (password === "Argos2026*-*") { 
+        setIsAdmin(true);
+      } else {
+        if (password !== null) alert("⛔ Contraseña incorrecta");
+      }
+    }
+  };
 
   // --- LÓGICA DE TABLEROS ---
   const createNewBoard = async () => {
@@ -247,17 +267,17 @@ export default function App() {
 
         <div className="p-4 bg-slate-950 border-t border-slate-800">
           <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span>Vista:</span>
+            <span>Modo Actual:</span>
             <span className={isAdmin ? 'text-green-400 font-bold' : 'text-blue-400 font-bold'}>
               {isAdmin ? 'ADMIN' : 'CLIENTE'}
             </span>
           </div>
           <button 
-            onClick={() => setIsAdmin(!isAdmin)}
-            className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white py-2 rounded text-xs transition-colors"
+            onClick={handleRoleSwitch}
+            className={`w-full flex items-center justify-center gap-2 py-2 rounded text-xs transition-colors text-white ${isAdmin ? 'bg-red-900 hover:bg-red-800' : 'bg-slate-800 hover:bg-slate-700'}`}
           >
-            <User size={12} />
-            Cambiar Rol
+            {isAdmin ? <Unlock size={12} /> : <Lock size={12} />}
+            {isAdmin ? 'Salir de Admin' : 'Entrar como Admin'}
           </button>
         </div>
       </div>
@@ -313,7 +333,7 @@ export default function App() {
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
             <Layout size={48} className="mb-4 text-gray-300" />
-            <p>Selecciona una tabla o crea una nueva (+)</p>
+            <p>Selecciona una tabla o espera a que el administrador cree una.</p>
           </div>
         )}
       </div>
