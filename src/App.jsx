@@ -11,7 +11,7 @@ import {
   Plus, MessageSquare, Trash2, Layout, 
   User, X, Send, Database, AlertCircle, Settings, 
   Lock, Unlock, Clock, Briefcase, Users, LogIn, LogOut,
-  Edit2, Eye, EyeOff, Shield, UserPlus
+  Edit2, Eye, EyeOff, Shield, UserPlus, ClipboardList
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN DE FIREBASE ---
@@ -72,8 +72,9 @@ export default function App() {
   // DATOS
   const [boards, setBoards] = useState([]);
   const [usersList, setUsersList] = useState([]);
+  const [logsList, setLogsList] = useState([]); // Nuevo estado para logs
   const [activeBoardId, setActiveBoardId] = useState(null);
-  const [activeSection, setActiveSection] = useState('projects'); // 'projects', 'crm', 'users'
+  const [activeSection, setActiveSection] = useState('projects'); // 'projects', 'crm', 'users', 'logs'
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -100,12 +101,10 @@ export default function App() {
       setLoading(false);
     }, (err) => setError(err.message));
 
-    // 2. Cargar Usuarios (Para el Admin y Login)
+    // 2. Cargar Usuarios
     const qUsers = collection(db, 'argos_data', appId, 'users');
     const unsubUsers = onSnapshot(qUsers, async (snapshot) => {
       let loadedUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
-      // SI NO HAY USUARIOS, CREAR LOS POR DEFECTO CON LOS NOMBRES NUEVOS
       if (loadedUsers.length === 0) {
         await createDefaultUsers();
       } else {
@@ -113,7 +112,16 @@ export default function App() {
       }
     });
 
-    return () => { unsubBoards(); unsubUsers(); };
+    // 3. Cargar Logs de Acceso (Nuevo)
+    const qLogs = collection(db, 'argos_data', appId, 'access_logs');
+    const unsubLogs = onSnapshot(qLogs, (snapshot) => {
+      const loadedLogs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Ordenar por fecha descendente (lo más nuevo primero)
+      loadedLogs.sort((a, b) => b.timestamp - a.timestamp);
+      setLogsList(loadedLogs);
+    });
+
+    return () => { unsubBoards(); unsubUsers(); unsubLogs(); };
   }, [firebaseUser]);
 
   const createDefaultUsers = async () => {
@@ -123,13 +131,26 @@ export default function App() {
     await addDoc(collection(db, 'argos_data', appId, 'users'), viewUser);
   };
 
-  // --- LOGIN ---
-  const handleLogin = (username, password) => {
+  // --- LOGIN Y LOGGING ---
+  const handleLogin = async (username, password) => {
     const foundUser = usersList.find(u => u.name.toLowerCase() === username.toLowerCase() && u.password === password);
     
     if (foundUser) {
       setCurrentUser(foundUser);
       setView('app');
+      
+      // REGISTRAR ACCESO EN AUDITORÍA
+      try {
+        await addDoc(collection(db, 'argos_data', appId, 'access_logs'), {
+          userName: foundUser.name,
+          userRole: foundUser.role,
+          timestamp: Date.now(),
+          action: 'login'
+        });
+      } catch (e) {
+        console.error("No se pudo guardar el log", e);
+      }
+
       // Seleccionar primer tablero por defecto
       if (boards.length > 0) {
          const first = boards.find(b => b.type !== 'crm') || boards[0];
@@ -204,7 +225,7 @@ export default function App() {
     if (activeBoardId === boardId) setActiveBoardId(null);
   };
 
-  // --- GESTIÓN DE COLUMNAS (NUEVO) ---
+  // --- GESTIÓN DE COLUMNAS ---
   const updateBoard = async (boardId, data) => {
     await updateDoc(doc(db, 'argos_data', appId, 'boards', boardId), data);
   };
@@ -213,7 +234,6 @@ export default function App() {
     const col = board.columns.find(c => c.id === colId);
     const newTitle = prompt("Nuevo nombre para la columna:", col.title);
     if (!newTitle) return;
-    
     const newColumns = board.columns.map(c => c.id === colId ? { ...c, title: newTitle } : c);
     await updateBoard(board.id, { columns: newColumns });
   };
@@ -221,8 +241,6 @@ export default function App() {
   const addColumn = async (board) => {
     const title = prompt("Nombre de la nueva columna:");
     if (!title) return;
-    
-    // Tipo simple por defecto, podría expandirse a un selector
     const newCol = { id: generateId(), title, type: 'text', width: 'w-40' };
     await updateBoard(board.id, { columns: [...board.columns, newCol] });
   };
@@ -317,13 +335,21 @@ export default function App() {
             )}
           </div>
 
-          {/* USUARIOS (SOLO ADMIN) */}
+          {/* ADMIN MENU */}
           {isAdmin && (
-            <div>
-              <div className={`flex items-center gap-2 px-2 py-1 text-xs font-bold uppercase cursor-pointer ${activeSection === 'users' ? 'text-purple-400' : 'text-slate-500'}`} onClick={() => { setActiveSection('users'); setActiveBoardId(null); }}>
-                <Shield size={14} /> USUARIOS
+            <>
+              <div className="pt-4 border-t border-slate-700">
+                <div className="text-[10px] font-bold text-slate-500 px-2 mb-2">ADMINISTRACIÓN</div>
+                
+                <div className={`flex items-center gap-2 px-2 py-2 text-xs font-bold uppercase cursor-pointer hover:bg-slate-800 rounded transition-colors ${activeSection === 'users' ? 'text-purple-400 bg-slate-800' : 'text-slate-400'}`} onClick={() => { setActiveSection('users'); setActiveBoardId(null); }}>
+                  <Shield size={14} /> USUARIOS
+                </div>
+
+                <div className={`flex items-center gap-2 px-2 py-2 text-xs font-bold uppercase cursor-pointer hover:bg-slate-800 rounded transition-colors ${activeSection === 'logs' ? 'text-yellow-400 bg-slate-800' : 'text-slate-400'}`} onClick={() => { setActiveSection('logs'); setActiveBoardId(null); }}>
+                  <ClipboardList size={14} /> AUDITORÍA
+                </div>
               </div>
-            </div>
+            </>
           )}
 
         </div>
@@ -347,9 +373,11 @@ export default function App() {
       {/* CONTENIDO PRINCIPAL */}
       <div className="flex-1 flex flex-col h-full overflow-hidden bg-gray-50">
         
-        {/* VISTA DE USUARIOS */}
+        {/* ROUTING DE VISTAS */}
         {activeSection === 'users' && isAdmin ? (
            <UsersManager users={usersList} onCreate={createUser} onDelete={deleteUser} />
+        ) : activeSection === 'logs' && isAdmin ? (
+           <AccessLogsViewer logs={logsList} />
         ) : activeBoard ? (
           // VISTA DE TABLERO
           <>
@@ -500,6 +528,56 @@ function LoginScreen({ onLogin, users }) {
             <p>Acceso restringido a personal autorizado.</p>
             <p className="mt-2">ARGOS SOLUTION © 2026</p>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- VISTA DE AUDITORÍA ---
+function AccessLogsViewer({ logs }) {
+  return (
+    <div className="p-8 w-full max-w-5xl mx-auto h-full flex flex-col">
+      <div className="mb-6">
+        <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><ClipboardList /> Auditoría de Accesos</h2>
+        <p className="text-gray-500">Historial de inicios de sesión en la plataforma.</p>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex-1 overflow-hidden flex flex-col">
+        <div className="overflow-auto flex-1">
+          <table className="w-full text-left">
+            <thead className="bg-gray-50 text-xs uppercase text-gray-500 font-bold sticky top-0">
+              <tr>
+                <th className="p-4 border-b">Usuario</th>
+                <th className="p-4 border-b">Rol</th>
+                <th className="p-4 border-b">Fecha y Hora</th>
+                <th className="p-4 border-b">Acción</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {logs.map((log, index) => (
+                <tr key={index} className="hover:bg-slate-50">
+                  <td className="p-4 font-medium text-gray-800">{log.userName}</td>
+                  <td className="p-4">
+                    <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${log.userRole === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                      {log.userRole === 'admin' ? 'Admin' : 'Lector'}
+                    </span>
+                  </td>
+                  <td className="p-4 text-sm text-gray-600 font-mono">
+                    {new Date(log.timestamp).toLocaleString()}
+                  </td>
+                  <td className="p-4 text-sm text-green-600 font-bold">
+                    {log.action === 'login' ? 'Inicio de Sesión' : log.action}
+                  </td>
+                </tr>
+              ))}
+              {logs.length === 0 && (
+                <tr>
+                  <td colSpan="4" className="p-8 text-center text-gray-400">No hay registros de acceso aún.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
