@@ -105,7 +105,7 @@ export default function App() {
     const unsubUsers = onSnapshot(qUsers, async (snapshot) => {
       let loadedUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      // SI NO HAY USUARIOS, CREAR LOS POR DEFECTO
+      // SI NO HAY USUARIOS, CREAR LOS POR DEFECTO CON LOS NOMBRES NUEVOS
       if (loadedUsers.length === 0) {
         await createDefaultUsers();
       } else {
@@ -117,8 +117,8 @@ export default function App() {
   }, [firebaseUser]);
 
   const createDefaultUsers = async () => {
-    const adminUser = { name: "Byron Juárez", password: "argos2024", role: "admin", createdAt: Date.now() };
-    const viewUser = { name: "José Samayoa", password: "Argos2026*", role: "viewer", createdAt: Date.now() };
+    const adminUser = { name: "bjuarez", password: "argos2024", role: "admin", createdAt: Date.now() };
+    const viewUser = { name: "jsamayoa", password: "Argos2026*", role: "viewer", createdAt: Date.now() };
     await addDoc(collection(db, 'argos_data', appId, 'users'), adminUser);
     await addDoc(collection(db, 'argos_data', appId, 'users'), viewUser);
   };
@@ -148,7 +148,7 @@ export default function App() {
 
   // --- GESTIÓN DE USUARIOS (ADMIN) ---
   const createUser = async () => {
-    const name = prompt("Nombre del usuario:");
+    const name = prompt("Nombre de usuario (Login):");
     if (!name) return;
     const password = prompt("Contraseña:");
     if (!password) return;
@@ -466,7 +466,7 @@ function LoginScreen({ onLogin, users }) {
                 value={name}
                 onChange={e => setName(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg p-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
-                placeholder="Ingresa tu nombre"
+                placeholder="Ingresa tu usuario"
               />
             </div>
             <div>
