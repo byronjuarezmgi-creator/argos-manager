@@ -95,24 +95,30 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // --- CARGA DE DATOS ---
+  // --- CARGA DE DATOS (CORREGIDO EL BUG DEL SALTO) ---
   useEffect(() => {
     if (!user || !db) return;
 
     const q = collection(db, 'argos_data', appId, 'boards');
     
+    // Variable local para controlar ÚNICAMENTE la carga inicial
+    let isFirstLoad = true;
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const loadedBoards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       loadedBoards.sort((a, b) => a.createdAt - b.createdAt);
       setBoards(loadedBoards);
       
-      // Si no hay tablero activo, seleccionar el primero disponible de la sección actual
-      if (!activeBoardId && loadedBoards.length > 0) {
-        // Intentar buscar uno del tipo actual, si no el primero que haya
-        const firstRelevant = loadedBoards.find(b => 
-          activeSection === 'crm' ? b.type === 'crm' : b.type !== 'crm'
-        );
+      // CORRECCIÓN: Usamos isFirstLoad para asegurarnos de que solo cambiamos 
+      // el tablero activo AUTOMÁTICAMENTE la primera vez que entras a la app.
+      // Si escribes y se actualiza la base de datos, esto se saltará, manteniendo tu selección.
+      if (isFirstLoad && loadedBoards.length > 0) {
+        // Intentar buscar uno del tipo proyecto por defecto
+        const firstRelevant = loadedBoards.find(b => b.type !== 'crm') || loadedBoards[0];
         if (firstRelevant) setActiveBoardId(firstRelevant.id);
+        
+        // Marcamos que ya hicimos la carga inicial
+        isFirstLoad = false;
       }
       
       setLoading(false);
@@ -158,7 +164,7 @@ export default function App() {
         { id: 'col_next', title: 'Siguiente Paso', type: 'text', width: 'w-40' },
       ];
     } else {
-      // Columnas para Proyectos (Lógica anterior)
+      // Columnas para Proyectos
       columns = [
         { id: 'col_item', title: 'Tarea / Elemento', type: 'text', width: 'w-1/3' },
         { id: 'col_status', title: 'Estado', type: 'status', width: 'w-32' },
@@ -178,7 +184,11 @@ export default function App() {
     };
 
     try {
-      await addDoc(collection(db, 'argos_data', appId, 'boards'), newBoard);
+      const docRef = await addDoc(collection(db, 'argos_data', appId, 'boards'), newBoard);
+      // Opcional: Cambiar automáticamente al nuevo tablero creado
+      setActiveBoardId(docRef.id);
+      if(type === 'crm') setActiveSection('crm');
+      else setActiveSection('projects');
     } catch (e) {
       alert("Error al crear: " + e.message);
     }
@@ -203,7 +213,6 @@ export default function App() {
     await updateBoardData(board.id, { rows: updatedRows });
   };
 
-  // NUEVA FUNCIÓN: Borrar fila individual
   const deleteRow = async (board, rowId) => {
     if (!isAdmin) return;
     if (!confirm("¿Borrar este elemento individualmente?")) return;
@@ -213,6 +222,7 @@ export default function App() {
   };
 
   const updateCellValue = async (board, rowId, colId, value) => {
+    // Actualización optimista o directa
     const updatedRows = board.rows.map(row => {
       if (row.id === rowId) {
         return { ...row, values: { ...row.values, [colId]: value } };
@@ -242,7 +252,6 @@ export default function App() {
   const projectBoards = boards.filter(b => b.type !== 'crm');
   const crmBoards = boards.filter(b => b.type === 'crm');
   
-  const currentList = activeSection === 'crm' ? crmBoards : projectBoards;
   const activeBoard = boards.find(b => b.id === activeBoardId);
 
   // --- RENDERIZADO ---
