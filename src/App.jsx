@@ -2,14 +2,16 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, collection, doc, onSnapshot, 
-  addDoc, updateDoc, deleteDoc 
+  addDoc, updateDoc, deleteDoc, getDocs, query, where 
 } from 'firebase/firestore'; 
 import { 
   getAuth, signInAnonymously, onAuthStateChanged 
 } from 'firebase/auth';
 import { 
   Plus, MessageSquare, Trash2, Layout, 
-  User, X, Send, Database, AlertCircle, Settings, Lock, Unlock, Clock, Briefcase, Users, LogIn, LogOut
+  User, X, Send, Database, AlertCircle, Settings, 
+  Lock, Unlock, Clock, Briefcase, Users, LogIn, LogOut,
+  Edit2, Eye, EyeOff, Shield, UserPlus
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN DE FIREBASE ---
@@ -23,7 +25,7 @@ const firebaseConfig = {
   measurementId: "G-T2MBMQ769S"
 };
 
-// --- VALIDACIÓN DE CONFIGURACIÓN ---
+// --- VALIDACIÓN ---
 const isConfigured = firebaseConfig.apiKey !== "TU_API_KEY_AQUI";
 
 let app, auth, db;
@@ -37,7 +39,6 @@ if (isConfigured) {
   }
 }
 
-// Un ID fijo para que todos vean lo mismo en tu empresa
 const appId = 'argos-production-v1'; 
 
 // --- UTILIDADES ---
@@ -60,375 +61,367 @@ const COLORS = {
 
 // --- COMPONENTE PRINCIPAL ---
 export default function App() {
-  if (!isConfigured) {
-    return <ConfigInstructions />;
-  }
+  if (!isConfigured) return <ConfigInstructions />;
 
-  const [user, setUser] = useState(null);
+  const [firebaseUser, setFirebaseUser] = useState(null);
+  
+  // ESTADO DE LA APP
+  const [currentUser, setCurrentUser] = useState(null); // { name, role, id }
+  const [view, setView] = useState('login'); // 'login', 'app'
+  
+  // DATOS
   const [boards, setBoards] = useState([]);
+  const [usersList, setUsersList] = useState([]);
   const [activeBoardId, setActiveBoardId] = useState(null);
-  
-  // ESTADOS DE USUARIO
-  const [isAdmin, setIsAdmin] = useState(false); // Controla si puede editar
-  const [currentUserName, setCurrentUserName] = useState("Visita"); // Controla el nombre en comentarios
-  
-  // Estado para saber qué sección vemos: 'projects' o 'crm'
-  const [activeSection, setActiveSection] = useState('projects'); 
+  const [activeSection, setActiveSection] = useState('projects'); // 'projects', 'crm', 'users'
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeCommentRow, setActiveCommentRow] = useState(null);
 
-  // --- AUTENTICACIÓN ---
+  // --- INICIALIZACIÓN ---
   useEffect(() => {
     if (!auth) return;
-    
-    signInAnonymously(auth).catch((err) => {
-      console.error("Error Auth:", err);
-      if (err.code === 'auth/api-key-not-valid') {
-        setError("La API Key ingresada no es válida. Verifica que la copiaste correctamente de Firebase.");
-      } else {
-        setError(err.message);
-      }
-    });
-    
-    const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
+    signInAnonymously(auth).catch(err => console.error(err));
+    const unsubscribe = onAuthStateChanged(auth, u => setFirebaseUser(u));
     return () => unsubscribe();
   }, []);
 
   // --- CARGA DE DATOS ---
   useEffect(() => {
-    if (!user || !db) return;
+    if (!firebaseUser || !db) return;
 
-    const q = collection(db, 'argos_data', appId, 'boards');
-    
-    let isFirstLoad = true;
+    // 1. Cargar Tableros
+    const qBoards = collection(db, 'argos_data', appId, 'boards');
+    const unsubBoards = onSnapshot(qBoards, (snapshot) => {
+      const loaded = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      loaded.sort((a, b) => a.createdAt - b.createdAt);
+      setBoards(loaded);
+      setLoading(false);
+    }, (err) => setError(err.message));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const loadedBoards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      loadedBoards.sort((a, b) => a.createdAt - b.createdAt);
-      setBoards(loadedBoards);
+    // 2. Cargar Usuarios (Para el Admin y Login)
+    const qUsers = collection(db, 'argos_data', appId, 'users');
+    const unsubUsers = onSnapshot(qUsers, async (snapshot) => {
+      let loadedUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      if (isFirstLoad && loadedBoards.length > 0) {
-        const firstRelevant = loadedBoards.find(b => b.type !== 'crm') || loadedBoards[0];
-        if (firstRelevant) setActiveBoardId(firstRelevant.id);
-        isFirstLoad = false;
+      // SI NO HAY USUARIOS, CREAR LOS POR DEFECTO
+      if (loadedUsers.length === 0) {
+        await createDefaultUsers();
+      } else {
+        setUsersList(loadedUsers);
       }
-      
-      setLoading(false);
-    }, (err) => {
-      console.error("Error cargando tableros:", err);
-      setError("Error de conexión: " + err.message);
-      setLoading(false);
     });
 
-    return () => unsubscribe();
-  }, [user]);
+    return () => { unsubBoards(); unsubUsers(); };
+  }, [firebaseUser]);
 
-  // --- GESTIÓN DE SESIÓN (LOGIN) ---
-  const handleLogin = () => {
-    // Si ya está logueado (No es Visita), cerramos sesión
-    if (currentUserName !== "Visita") {
-      setIsAdmin(false);
-      setCurrentUserName("Visita");
-      return;
-    }
+  const createDefaultUsers = async () => {
+    const adminUser = { name: "Byron Juárez", password: "argos2024", role: "admin", createdAt: Date.now() };
+    const viewUser = { name: "José Samayoa", password: "Argos2026*", role: "viewer", createdAt: Date.now() };
+    await addDoc(collection(db, 'argos_data', appId, 'users'), adminUser);
+    await addDoc(collection(db, 'argos_data', appId, 'users'), viewUser);
+  };
 
-    const password = prompt("🔐 Ingrese su contraseña de acceso:");
-    if (!password) return;
-
-    // LÓGICA DE USUARIOS
-    if (password === "argos2024") { 
-      setIsAdmin(true);
-      setCurrentUserName("Byron Juárez");
-    } else if (password === "Argos2026*") {
-      setIsAdmin(false); // José solo lectura
-      setCurrentUserName("José Samayoa");
+  // --- LOGIN ---
+  const handleLogin = (username, password) => {
+    const foundUser = usersList.find(u => u.name.toLowerCase() === username.toLowerCase() && u.password === password);
+    
+    if (foundUser) {
+      setCurrentUser(foundUser);
+      setView('app');
+      // Seleccionar primer tablero por defecto
+      if (boards.length > 0) {
+         const first = boards.find(b => b.type !== 'crm') || boards[0];
+         if(first) setActiveBoardId(first.id);
+      }
     } else {
-      alert("⛔ Contraseña incorrecta");
+      alert("⛔ Credenciales incorrectas");
     }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setView('login');
+    setActiveSection('projects');
+  };
+
+  // --- GESTIÓN DE USUARIOS (ADMIN) ---
+  const createUser = async () => {
+    const name = prompt("Nombre del usuario:");
+    if (!name) return;
+    const password = prompt("Contraseña:");
+    if (!password) return;
+    const role = confirm("¿Es Administrador? (Aceptar = Sí, Cancelar = Solo Lectura)") ? 'admin' : 'viewer';
+
+    await addDoc(collection(db, 'argos_data', appId, 'users'), {
+      name, password, role, createdAt: Date.now()
+    });
+  };
+
+  const deleteUser = async (userId) => {
+    if (!confirm("¿Borrar usuario?")) return;
+    await deleteDoc(doc(db, 'argos_data', appId, 'users', userId));
   };
 
   // --- GESTIÓN DE TABLEROS ---
   const createNewBoard = async (type = 'project') => {
     const defaultTitle = type === 'crm' ? "Nuevo Listado de Clientes" : "Nuevo Proyecto";
-    const title = prompt(`Nombre para ${type === 'crm' ? 'la lista de clientes' : 'el proyecto'}:`, defaultTitle);
-    if (!title || !user) return;
+    const title = prompt(`Nombre:`, defaultTitle);
+    if (!title) return;
 
     let columns = [];
-
     if (type === 'crm') {
       columns = [
         { id: 'col_client', title: 'Cliente / Empresa', type: 'text', width: 'w-1/3' },
-        { id: 'col_status', title: 'Estatus Venta', type: 'crm_status', width: 'w-32' },
-        { id: 'col_contact', title: 'Contacto Principal', type: 'text', width: 'w-40' },
+        { id: 'col_status', title: 'Estatus', type: 'crm_status', width: 'w-32' },
+        { id: 'col_contact', title: 'Contacto', type: 'text', width: 'w-40' },
         { id: 'col_phone', title: 'Teléfono', type: 'text', width: 'w-32' },
-        { id: 'col_last_contact', title: 'Último Contacto', type: 'date', width: 'w-32' },
         { id: 'col_next', title: 'Siguiente Paso', type: 'text', width: 'w-40' },
       ];
     } else {
       columns = [
-        { id: 'col_item', title: 'Tarea / Elemento', type: 'text', width: 'w-1/3' },
+        { id: 'col_item', title: 'Tarea', type: 'text', width: 'w-1/3' },
         { id: 'col_status', title: 'Estado', type: 'status', width: 'w-32' },
-        { id: 'col_start', title: 'Fecha Inicio', type: 'date', width: 'w-32' },
-        { id: 'col_end', title: 'Fecha Final', type: 'date', width: 'w-32' },
-        { id: 'col_duration', title: 'Duración', type: 'duration', width: 'w-24' },
+        { id: 'col_start', title: 'Inicio', type: 'date', width: 'w-32' },
+        { id: 'col_end', title: 'Fin', type: 'date', width: 'w-32' },
+        { id: 'col_duration', title: 'Días', type: 'duration', width: 'w-24' },
         { id: 'col_resp', title: 'Responsable', type: 'text', width: 'w-40' },
       ];
     }
 
-    const newBoard = {
-      title,
-      type,
-      createdAt: Date.now(),
-      columns,
-      rows: [] 
-    };
-
+    const newBoard = { title, type, createdAt: Date.now(), columns, rows: [] };
     try {
-      const docRef = await addDoc(collection(db, 'argos_data', appId, 'boards'), newBoard);
-      setActiveBoardId(docRef.id);
-      if(type === 'crm') setActiveSection('crm');
-      else setActiveSection('projects');
-    } catch (e) {
-      alert("Error al crear: " + e.message);
-    }
+      const ref = await addDoc(collection(db, 'argos_data', appId, 'boards'), newBoard);
+      setActiveBoardId(ref.id);
+      setActiveSection(type === 'crm' ? 'crm' : 'projects');
+    } catch (e) { alert(e.message); }
   };
 
   const deleteBoard = async (boardId) => {
-    if(!confirm("¿Borrar esta tabla completa y todos sus datos? No se puede deshacer.")) return;
+    if(!confirm("¿Borrar tabla completa?")) return;
     await deleteDoc(doc(db, 'argos_data', appId, 'boards', boardId));
     if (activeBoardId === boardId) setActiveBoardId(null);
   };
 
-  // --- GESTIÓN DE FILAS ---
-  const updateBoardData = async (boardId, newData) => {
-    if (!user) return;
-    const boardRef = doc(db, 'argos_data', appId, 'boards', boardId);
-    await updateDoc(boardRef, newData);
+  // --- GESTIÓN DE COLUMNAS (NUEVO) ---
+  const updateBoard = async (boardId, data) => {
+    await updateDoc(doc(db, 'argos_data', appId, 'boards', boardId), data);
   };
 
+  const renameColumn = async (board, colId) => {
+    const col = board.columns.find(c => c.id === colId);
+    const newTitle = prompt("Nuevo nombre para la columna:", col.title);
+    if (!newTitle) return;
+    
+    const newColumns = board.columns.map(c => c.id === colId ? { ...c, title: newTitle } : c);
+    await updateBoard(board.id, { columns: newColumns });
+  };
+
+  const addColumn = async (board) => {
+    const title = prompt("Nombre de la nueva columna:");
+    if (!title) return;
+    
+    // Tipo simple por defecto, podría expandirse a un selector
+    const newCol = { id: generateId(), title, type: 'text', width: 'w-40' };
+    await updateBoard(board.id, { columns: [...board.columns, newCol] });
+  };
+
+  const deleteColumn = async (board, colId) => {
+    if(!confirm("¿Borrar columna? Los datos se perderán.")) return;
+    const newColumns = board.columns.filter(c => c.id !== colId);
+    await updateBoard(board.id, { columns: newColumns });
+  };
+
+  // --- GESTIÓN DE FILAS ---
   const addRow = async (board) => {
     const newRow = { id: generateId(), values: {}, comments: [] };
-    const updatedRows = [...board.rows, newRow];
-    await updateBoardData(board.id, { rows: updatedRows });
+    await updateBoard(board.id, { rows: [...board.rows, newRow] });
   };
 
   const deleteRow = async (board, rowId) => {
-    if (!isAdmin) return;
-    if (!confirm("¿Borrar este elemento individualmente?")) return;
-    
-    const updatedRows = board.rows.filter(r => r.id !== rowId);
-    await updateBoardData(board.id, { rows: updatedRows });
+    if (!confirm("¿Borrar fila?")) return;
+    await updateBoard(board.id, { rows: board.rows.filter(r => r.id !== rowId) });
   };
 
-  const updateCellValue = async (board, rowId, colId, value) => {
-    const updatedRows = board.rows.map(row => {
-      if (row.id === rowId) {
-        return { ...row, values: { ...row.values, [colId]: value } };
-      }
-      return row;
-    });
-    await updateBoardData(board.id, { rows: updatedRows });
+  const updateCell = async (board, rowId, colId, val) => {
+    const newRows = board.rows.map(r => r.id === rowId ? { ...r, values: { ...r.values, [colId]: val } } : r);
+    await updateBoard(board.id, { rows: newRows });
   };
 
   const addComment = async (board, rowId, text) => {
-    const updatedRows = board.rows.map(row => {
-      if (row.id === rowId) {
-        const newComment = {
-          id: generateId(),
-          text,
-          author: currentUserName, // USAMOS EL NOMBRE DEL USUARIO ACTUAL
-          timestamp: Date.now()
+    const newRows = board.rows.map(r => {
+      if (r.id === rowId) {
+        return { 
+          ...r, 
+          comments: [...(r.comments || []), { id: generateId(), text, author: currentUser.name, timestamp: Date.now() }] 
         };
-        return { ...row, comments: [...(row.comments || []), newComment] };
       }
-      return row;
+      return r;
     });
-    await updateBoardData(board.id, { rows: updatedRows });
+    await updateBoard(board.id, { rows: newRows });
   };
 
+
+  // --- RENDERIZADO ---
+  if (loading) return <div className="h-screen flex items-center justify-center bg-slate-900 text-white animate-pulse">Cargando Argos...</div>;
+  if (view === 'login') return <LoginScreen onLogin={handleLogin} users={usersList} />;
+
+  // Filtrados
   const projectBoards = boards.filter(b => b.type !== 'crm');
   const crmBoards = boards.filter(b => b.type === 'crm');
   const activeBoard = boards.find(b => b.id === activeBoardId);
-
-  // --- RENDERIZADO ---
-  if (error) return <ErrorScreen error={error} />;
-  if (loading) return <div className="flex h-screen items-center justify-center text-gray-500 animate-pulse">Cargando Argos Solutions...</div>;
+  const isAdmin = currentUser?.role === 'admin';
 
   return (
-    <div className="flex h-screen bg-white font-sans text-sm overflow-hidden text-gray-800">
+    <div className="flex h-screen bg-white font-sans text-sm text-gray-800">
       
       {/* SIDEBAR */}
-      <div className="w-64 bg-slate-900 text-white flex flex-col flex-shrink-0 border-r border-slate-700 z-20">
-        <div className="p-4 border-b border-slate-700 bg-slate-800">
-          <h1 className="font-bold text-lg flex items-center gap-2 text-blue-400">
-            <Database size={20} />
-            ARGOS
+      <div className="w-64 bg-slate-900 text-white flex flex-col border-r border-slate-700">
+        <div className="p-5 border-b border-slate-700 bg-slate-800">
+          <h1 className="font-bold text-xl flex items-center gap-2 text-blue-400">
+            <Database /> ARGOS
           </h1>
           <p className="text-xs text-slate-400 mt-1">Video Telemática & CRM</p>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-2 space-y-4">
+        <div className="flex-1 overflow-y-auto p-3 space-y-6">
           
-          {/* SECCIÓN PROYECTOS */}
+          {/* PROYECTOS */}
           <div>
-            <div 
-              className={`flex items-center gap-2 px-3 py-2 text-xs font-bold uppercase tracking-wider cursor-pointer ${activeSection === 'projects' ? 'text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}
-              onClick={() => setActiveSection('projects')}
-            >
-              <Briefcase size={14} />
-              PROYECTOS / TABLEROS
+            <div className={`flex items-center gap-2 px-2 py-1 text-xs font-bold uppercase cursor-pointer ${activeSection === 'projects' ? 'text-blue-400' : 'text-slate-500'}`} onClick={() => setActiveSection('projects')}>
+              <Briefcase size={14} /> PROYECTOS
             </div>
-            
             {activeSection === 'projects' && (
-              <div className="mt-1 space-y-1 pl-2">
-                {projectBoards.map(board => (
-                  <div 
-                    key={board.id}
-                    onClick={() => setActiveBoardId(board.id)}
-                    className={`group flex items-center justify-between px-3 py-2 rounded cursor-pointer transition-colors ${activeBoardId === board.id ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
-                  >
-                    <div className="flex items-center gap-2 truncate">
-                      <Layout size={14} />
-                      <span className="truncate">{board.title}</span>
-                    </div>
-                    {isAdmin && (
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); deleteBoard(board.id); }}
-                        className="opacity-0 group-hover:opacity-100 hover:text-red-300 transition-opacity"
-                        title="Borrar tabla completa"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    )}
-                  </div>
+              <div className="mt-2 space-y-1 pl-2">
+                {projectBoards.map(b => (
+                  <SidebarItem key={b.id} title={b.title} active={activeBoardId === b.id} onClick={() => setActiveBoardId(b.id)} isAdmin={isAdmin} onDelete={() => deleteBoard(b.id)} icon={<Layout size={14}/>} />
                 ))}
-                {isAdmin && (
-                  <button 
-                    onClick={() => createNewBoard('project')}
-                    className="flex items-center gap-2 px-3 py-2 text-slate-400 hover:text-white hover:bg-slate-800 w-full rounded mt-2 transition-colors border border-dashed border-slate-700 text-xs"
-                  >
-                    <Plus size={12} /> Nueva Tabla
-                  </button>
-                )}
+                {isAdmin && <AddButton onClick={() => createNewBoard('project')} label="Proyecto" />}
               </div>
             )}
           </div>
 
-          {/* SECCIÓN CLIENTES (CRM) */}
+          {/* CRM */}
           <div>
-            <div 
-              className={`flex items-center gap-2 px-3 py-2 text-xs font-bold uppercase tracking-wider cursor-pointer ${activeSection === 'crm' ? 'text-green-400' : 'text-slate-500 hover:text-slate-300'}`}
-              onClick={() => setActiveSection('crm')}
-            >
-              <Users size={14} />
-              CLIENTES (CRM)
+            <div className={`flex items-center gap-2 px-2 py-1 text-xs font-bold uppercase cursor-pointer ${activeSection === 'crm' ? 'text-green-400' : 'text-slate-500'}`} onClick={() => setActiveSection('crm')}>
+              <Users size={14} /> CLIENTES (CRM)
             </div>
-
             {activeSection === 'crm' && (
-              <div className="mt-1 space-y-1 pl-2">
-                {crmBoards.map(board => (
-                  <div 
-                    key={board.id}
-                    onClick={() => setActiveBoardId(board.id)}
-                    className={`group flex items-center justify-between px-3 py-2 rounded cursor-pointer transition-colors ${activeBoardId === board.id ? 'bg-green-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
-                  >
-                    <div className="flex items-center gap-2 truncate">
-                      <User size={14} />
-                      <span className="truncate">{board.title}</span>
-                    </div>
-                    {isAdmin && (
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); deleteBoard(board.id); }}
-                        className="opacity-0 group-hover:opacity-100 hover:text-red-300 transition-opacity"
-                        title="Borrar lista completa"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    )}
-                  </div>
+              <div className="mt-2 space-y-1 pl-2">
+                {crmBoards.map(b => (
+                  <SidebarItem key={b.id} title={b.title} active={activeBoardId === b.id} onClick={() => setActiveBoardId(b.id)} isAdmin={isAdmin} onDelete={() => deleteBoard(b.id)} icon={<User size={14}/>} />
                 ))}
-                {isAdmin && (
-                  <button 
-                    onClick={() => createNewBoard('crm')}
-                    className="flex items-center gap-2 px-3 py-2 text-slate-400 hover:text-white hover:bg-slate-800 w-full rounded mt-2 transition-colors border border-dashed border-slate-700 text-xs"
-                  >
-                    <Plus size={12} /> Nuevo Listado
-                  </button>
-                )}
+                {isAdmin && <AddButton onClick={() => createNewBoard('crm')} label="Listado CRM" />}
               </div>
             )}
           </div>
+
+          {/* USUARIOS (SOLO ADMIN) */}
+          {isAdmin && (
+            <div>
+              <div className={`flex items-center gap-2 px-2 py-1 text-xs font-bold uppercase cursor-pointer ${activeSection === 'users' ? 'text-purple-400' : 'text-slate-500'}`} onClick={() => { setActiveSection('users'); setActiveBoardId(null); }}>
+                <Shield size={14} /> USUARIOS
+              </div>
+            </div>
+          )}
 
         </div>
 
         <div className="p-4 bg-slate-950 border-t border-slate-800">
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span>Usuario:</span>
-            <span className={isAdmin ? 'text-green-400 font-bold' : 'text-blue-400 font-bold'}>
-              {currentUserName}
-            </span>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-bold">
+              {currentUser.name.charAt(0)}
+            </div>
+            <div className="overflow-hidden">
+              <p className="font-bold truncate">{currentUser.name}</p>
+              <p className="text-xs text-slate-400 capitalize">{currentUser.role === 'admin' ? 'Administrador' : 'Solo Lectura'}</p>
+            </div>
           </div>
-          <button 
-            onClick={handleLogin}
-            className={`w-full flex items-center justify-center gap-2 py-2 rounded text-xs transition-colors text-white ${currentUserName !== 'Visita' ? 'bg-slate-700 hover:bg-slate-600' : 'bg-blue-600 hover:bg-blue-500'}`}
-          >
-            {currentUserName !== 'Visita' ? <LogOut size={12} /> : <LogIn size={12} />}
-            {currentUserName !== 'Visita' ? 'Cerrar Sesión' : 'Iniciar Sesión'}
+          <button onClick={handleLogout} className="w-full flex items-center justify-center gap-2 py-2 rounded text-xs bg-slate-800 hover:bg-slate-700 transition-colors">
+            <LogOut size={12} /> Cerrar Sesión
           </button>
         </div>
       </div>
 
-      {/* ÁREA PRINCIPAL */}
+      {/* CONTENIDO PRINCIPAL */}
       <div className="flex-1 flex flex-col h-full overflow-hidden bg-gray-50">
-        {activeBoard ? (
+        
+        {/* VISTA DE USUARIOS */}
+        {activeSection === 'users' && isAdmin ? (
+           <UsersManager users={usersList} onCreate={createUser} onDelete={deleteUser} />
+        ) : activeBoard ? (
+          // VISTA DE TABLERO
           <>
             <div className="bg-white border-b px-6 py-4 shadow-sm flex items-center justify-between">
               <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${activeBoard.type === 'crm' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
-                    {activeBoard.type === 'crm' ? 'CRM' : 'Proyecto'}
-                  </span>
-                </div>
-                <h2 className="text-2xl font-bold text-slate-800">{activeBoard.title}</h2>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${activeBoard.type === 'crm' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+                  {activeBoard.type === 'crm' ? 'CRM' : 'Proyecto'}
+                </span>
+                <h2 className="text-2xl font-bold text-slate-800 mt-1">{activeBoard.title}</h2>
               </div>
+              {isAdmin && (
+                 <button onClick={() => addColumn(activeBoard)} className="flex items-center gap-2 text-xs bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded text-slate-600">
+                    <Plus size={14}/> Nueva Columna
+                 </button>
+              )}
             </div>
 
             <div className="flex-1 overflow-auto p-6">
-              <div className="bg-white rounded-lg shadow border border-gray-200 min-w-max pb-10">
-                {/* Cabecera */}
+              <div className="bg-white rounded-lg shadow border border-gray-200 min-w-max pb-20">
+                {/* HEADERS */}
                 <div className="flex border-b border-gray-200 bg-gray-50 sticky top-0 z-10">
-                  <div className="w-10 p-3 border-r border-gray-100"></div>
+                  <div className="w-10 border-r border-gray-100"></div>
                   {activeBoard.columns.map(col => (
-                    <div key={col.id} className={`${col.width || 'w-40'} p-3 text-xs font-bold text-gray-500 uppercase tracking-wider border-r border-gray-100 flex-shrink-0`}>
-                      {col.title}
+                    <div key={col.id} className={`${col.width || 'w-40'} p-3 border-r border-gray-100 flex items-center justify-between group`}>
+                      <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">{col.title}</span>
+                      {isAdmin && (
+                        <div className="opacity-0 group-hover:opacity-100 flex gap-1">
+                          <button onClick={() => renameColumn(activeBoard, col.id)} className="p-1 hover:bg-blue-100 rounded text-blue-500"><Edit2 size={12}/></button>
+                          <button onClick={() => deleteColumn(activeBoard, col.id)} className="p-1 hover:bg-red-100 rounded text-red-500"><X size={12}/></button>
+                        </div>
+                      )}
                     </div>
                   ))}
                   <div className="w-20 p-3 text-xs font-bold text-gray-500 text-center uppercase border-r border-gray-100">Chat</div>
-                  {isAdmin && <div className="w-10 p-3 text-xs font-bold text-gray-500 text-center uppercase">Del</div>}
+                  {isAdmin && <div className="w-10"></div>}
                 </div>
 
-                {/* Filas */}
+                {/* ROWS */}
                 {activeBoard.rows.map(row => (
-                  <Row 
-                    key={row.id} 
-                    row={row} 
-                    columns={activeBoard.columns} 
-                    isAdmin={isAdmin}
-                    onUpdate={(colId, val) => updateCellValue(activeBoard, row.id, colId, val)}
-                    onOpenComments={() => setActiveCommentRow({ row, board: activeBoard })}
-                    onDelete={() => deleteRow(activeBoard, row.id)}
-                  />
+                  <div key={row.id} className="flex border-b border-gray-100 hover:bg-slate-50 bg-white">
+                    <div className="w-10 border-r border-gray-100 p-3 flex items-center justify-center bg-gray-50">
+                       <div className={`w-1.5 h-4 rounded-full ${activeBoard.type === 'crm' ? 'bg-green-400' : 'bg-blue-400'}`}></div>
+                    </div>
+                    {activeBoard.columns.map(col => (
+                      <div key={col.id} className={`${col.width || 'w-40'} border-r border-gray-100 flex-shrink-0`}>
+                        <Cell 
+                          type={col.type} 
+                          value={row.values[col.id]} 
+                          rowValues={row.values}
+                          isAdmin={isAdmin}
+                          onChange={(val) => updateCell(activeBoard, row.id, col.id, val)} 
+                        />
+                      </div>
+                    ))}
+                    <div className="w-20 border-r border-gray-100 flex items-center justify-center">
+                       <button onClick={() => setActiveCommentRow({ row, board: activeBoard })} className={`p-2 rounded-full hover:bg-gray-100 ${row.comments?.length ? 'text-blue-500' : 'text-gray-300'}`}>
+                         <MessageSquare size={16} />
+                       </button>
+                    </div>
+                    {isAdmin && (
+                      <div className="w-10 flex items-center justify-center">
+                        <button onClick={() => deleteRow(activeBoard, row.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14}/></button>
+                      </div>
+                    )}
+                  </div>
                 ))}
-
-                {/* Botón Agregar Fila */}
+                
                 {isAdmin && (
                   <div className="flex border-t border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => addRow(activeBoard)}>
                     <div className={`w-10 border-r border-gray-100 ${activeBoard.type === 'crm' ? 'bg-green-500' : 'bg-blue-500'}`}></div>
-                    <div className="flex-1 p-2 pl-4 text-gray-500 flex items-center gap-2 hover:text-gray-700 text-sm">
-                      <Plus size={16} />
-                      <span>Agregar {activeBoard.type === 'crm' ? 'Cliente' : 'Elemento'}</span>
+                    <div className="flex-1 p-2 pl-4 text-gray-500 flex items-center gap-2 text-sm">
+                      <Plus size={16} /> <span>Agregar Fila</span>
                     </div>
                   </div>
                 )}
@@ -436,70 +429,66 @@ export default function App() {
             </div>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
-            {activeSection === 'crm' ? <Users size={48} className="mb-4 text-green-200" /> : <Layout size={48} className="mb-4 text-blue-200" />}
-            <p className="text-lg font-medium text-gray-500">Sección {activeSection === 'crm' ? 'CLIENTES' : 'PROYECTOS'}</p>
-            <p className="text-sm">Selecciona una tabla o crea una nueva.</p>
-          </div>
+          <EmptyState />
         )}
       </div>
 
-      {/* DRAWER COMENTARIOS */}
       {activeCommentRow && (
         <CommentDrawer 
-          row={activeCommentRow.row}
-          board={activeCommentRow.board}
-          onClose={() => setActiveCommentRow(null)}
-          onAddComment={(text) => addComment(activeCommentRow.board, activeCommentRow.row.id, text)}
+          row={activeCommentRow.row} 
+          onClose={() => setActiveCommentRow(null)} 
+          onSend={(txt) => addComment(activeCommentRow.board, activeCommentRow.row.id, txt)} 
         />
       )}
     </div>
   );
 }
 
-// --- PANTALLA DE ERROR ---
-function ErrorScreen({ error }) {
-  return (
-    <div className="flex h-screen items-center justify-center bg-red-50 p-4">
-      <div className="bg-white p-6 rounded shadow-lg max-w-md text-center">
-        <AlertCircle size={48} className="mx-auto text-red-500 mb-4" />
-        <h2 className="text-xl font-bold text-gray-800 mb-2">Error de Conexión</h2>
-        <p className="text-gray-600 mb-4">{error}</p>
-        <button onClick={() => window.location.reload()} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
-          Reintentar
-        </button>
-      </div>
-    </div>
-  );
-}
+// --- PANTALLA DE LOGIN ---
+function LoginScreen({ onLogin, users }) {
+  const [name, setName] = useState("");
+  const [pass, setPass] = useState("");
 
-// --- PANTALLA DE INSTRUCCIONES ---
-function ConfigInstructions() {
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
-      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full overflow-hidden">
-        <div className="bg-blue-600 p-6 flex items-center gap-4">
-          <Settings className="text-white w-10 h-10" />
-          <div>
-            <h1 className="text-2xl font-bold text-white">Configuración Necesaria</h1>
-            <p className="text-blue-100">Argos Solution Manager</p>
-          </div>
+    <div className="h-screen bg-slate-900 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-blue-600 p-8 text-center">
+          <Database size={48} className="text-white mx-auto mb-4" />
+          <h1 className="text-3xl font-bold text-white tracking-tight">ARGOS</h1>
+          <p className="text-blue-100 mt-1">Plataforma de Gestión Inteligente</p>
         </div>
-        
-        <div className="p-8 space-y-6">
-          <div className="bg-amber-50 border-l-4 border-amber-500 p-4">
-            <p className="text-amber-800 font-medium">
-              Aún no has configurado tu base de datos Firebase.
-            </p>
-          </div>
-
+        <div className="p-8">
           <div className="space-y-4">
-            <h3 className="font-bold text-gray-800 text-lg">Pasos para activar:</h3>
-            <ol className="list-decimal list-inside space-y-3 text-gray-600">
-              <li>Ve a la consola de Firebase.</li>
-              <li>Copia SOLO las claves (apiKey, authDomain, etc).</li>
-              <li>Pégalas en el archivo <code>src/App.jsx</code>.</li>
-            </ol>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Usuario</label>
+              <input 
+                type="text" 
+                value={name}
+                onChange={e => setName(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg p-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                placeholder="Ingresa tu nombre"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Contraseña</label>
+              <input 
+                type="password" 
+                value={pass}
+                onChange={e => setPass(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg p-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                placeholder="••••••••"
+              />
+            </div>
+            <button 
+              onClick={() => onLogin(name, pass)}
+              className="w-full bg-slate-900 text-white font-bold py-3 rounded-lg hover:bg-slate-800 transition-transform active:scale-95"
+            >
+              ACCEDER
+            </button>
+          </div>
+          <div className="mt-6 text-center text-xs text-gray-400">
+            <p>Acceso restringido a personal autorizado.</p>
+            <p className="mt-2">ARGOS SOLUTION © 2026</p>
           </div>
         </div>
       </div>
@@ -507,176 +496,148 @@ function ConfigInstructions() {
   );
 }
 
-// --- COMPONENTES AUXILIARES ---
-
-function Row({ row, columns, isAdmin, onUpdate, onOpenComments, onDelete }) {
+// --- GESTOR DE USUARIOS ---
+function UsersManager({ users, onCreate, onDelete }) {
   return (
-    <div className="flex border-b border-gray-100 group hover:bg-slate-50 transition-colors bg-white items-stretch">
-      <div className="w-10 border-r border-gray-100 p-3 flex items-center justify-center bg-gray-50 group-hover:bg-gray-100">
-        <div className="w-1.5 h-4 bg-slate-300 rounded-full group-hover:bg-blue-400 transition-colors"></div> 
-      </div>
-      
-      {columns.map(col => (
-        <div key={col.id} className={`${col.width || 'w-40'} border-r border-gray-100 flex-shrink-0`}>
-          <Cell 
-            type={col.type} 
-            value={row.values[col.id]} 
-            rowValues={row.values}
-            isAdmin={isAdmin} 
-            onChange={(val) => onUpdate(col.id, val)} 
-          />
+    <div className="p-8 max-w-4xl mx-auto w-full">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Shield /> Gestión de Usuarios</h2>
+          <p className="text-gray-500">Administra quién tiene acceso a la plataforma.</p>
         </div>
-      ))}
-      
-      <div className="w-20 border-r border-gray-100 flex items-center justify-center flex-shrink-0">
-        <button onClick={onOpenComments} className={`p-2 rounded-full hover:bg-gray-100 ${row.comments?.length > 0 ? 'text-blue-500' : 'text-gray-300'}`}>
-          <MessageSquare size={16} />
+        <button onClick={onCreate} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 shadow-lg shadow-blue-200 transition-all">
+          <UserPlus size={18} /> Crear Usuario
         </button>
       </div>
 
-      {/* Botón de Borrar (Solo Admin) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {users.map(u => (
+          <div key={u.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex flex-col relative group hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-3 mb-3">
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white ${u.role === 'admin' ? 'bg-purple-500' : 'bg-blue-400'}`}>
+                {u.name.charAt(0)}
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-800">{u.name}</h3>
+                <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                  {u.role === 'admin' ? 'Administrador' : 'Solo Lectura'}
+                </span>
+              </div>
+            </div>
+            <div className="mt-auto pt-3 border-t border-gray-50 flex justify-between items-center text-xs text-gray-400">
+               <span>Clave: {u.password.substring(0,2)}•••</span>
+               {u.role !== 'admin' || users.filter(x => x.role === 'admin').length > 1 ? (
+                 <button onClick={() => onDelete(u.id)} className="text-red-400 hover:text-red-600 flex items-center gap-1">
+                   <Trash2 size={12} /> Eliminar
+                 </button>
+               ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- COMPONENTES UI AUXILIARES ---
+function SidebarItem({ title, active, onClick, isAdmin, onDelete, icon }) {
+  return (
+    <div 
+      onClick={onClick}
+      className={`group flex items-center justify-between px-3 py-2 rounded cursor-pointer transition-colors ${active ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
+    >
+      <div className="flex items-center gap-2 truncate">
+        {icon} <span className="truncate">{title}</span>
+      </div>
       {isAdmin && (
-        <div className="w-10 flex items-center justify-center flex-shrink-0">
-          <button 
-            onClick={onDelete}
-            className="p-2 rounded-full text-gray-200 hover:text-red-500 hover:bg-red-50 transition-colors"
-            title="Borrar fila"
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
+        <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="opacity-0 group-hover:opacity-100 hover:text-red-300 transition-opacity">
+          <Trash2 size={12} />
+        </button>
       )}
     </div>
   );
 }
 
-function Cell({ type, value, rowValues, onChange, isAdmin }) {
-  // CÁLCULO DE DURACIÓN
-  if (type === 'duration') {
-    const start = rowValues?.['col_start'];
-    const end = rowValues?.['col_end'];
-    let display = "-";
-    let bgClass = "bg-gray-50 text-gray-400";
-
-    if (start && end) {
-      const startDate = new Date(start);
-      const endDate = new Date(end);
-      const diffTime = endDate - startDate;
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-      
-      if (diffDays < 0) {
-        display = "Error";
-        bgClass = "bg-red-100 text-red-600 font-bold";
-      } else {
-        display = `${diffDays} días`;
-        bgClass = "bg-blue-100 text-blue-700 font-bold";
-      }
-    }
-    return (
-      <div className="h-full p-2 flex items-center justify-center">
-        <div className={`px-2 py-1 rounded text-xs ${bgClass} flex items-center gap-1`}>
-          <Clock size={10} />
-          {display}
-        </div>
-      </div>
-    );
-  }
-
-  // STATUS DE CRM
-  if (type === 'crm_status') {
-    const statusMap = {
-      'new': { label: 'Prospecto', class: COLORS.crm.new },
-      'contacted': { label: 'Contactado', class: COLORS.crm.contacted },
-      'won': { label: 'Cerrado', class: COLORS.crm.won },
-      'lost': { label: 'Perdido', class: COLORS.crm.lost },
-      '': { label: '-', class: COLORS.status.default }
-    };
-    const current = statusMap[value] || statusMap[''];
-
-    if (!isAdmin) return <div className={`m-1 h-8 flex items-center justify-center rounded text-xs font-bold ${current.class}`}>{current.label}</div>;
-
-    return (
-      <div className="p-1 h-full">
-        <select value={value || ''} onChange={(e) => onChange(e.target.value)} className={`w-full h-8 rounded text-center text-xs font-bold cursor-pointer ${current.class}`}>
-          <option value="" className="bg-white text-gray-700">-</option>
-          <option value="new" className="bg-blue-100 text-blue-800">Prospecto</option>
-          <option value="contacted" className="bg-yellow-100 text-yellow-800">Contactado</option>
-          <option value="won" className="bg-green-100 text-green-800">Cerrado (Ganado)</option>
-          <option value="lost" className="bg-gray-200 text-gray-600">Perdido</option>
-        </select>
-      </div>
-    );
-  }
-
-  // STATUS DE PROYECTOS
-  if (type === 'status') {
-    const statusMap = {
-      'done': { label: 'Listo', class: COLORS.status.done },
-      'working': { label: 'En Proceso', class: COLORS.status.working },
-      'stuck': { label: 'Detenido', class: COLORS.status.stuck },
-      '': { label: '-', class: COLORS.status.default }
-    };
-    const current = statusMap[value] || statusMap[''];
-
-    if (!isAdmin) return <div className={`m-1 h-8 flex items-center justify-center rounded text-xs font-bold ${current.class}`}>{current.label}</div>;
-
-    return (
-      <div className="p-1 h-full">
-        <select value={value || ''} onChange={(e) => onChange(e.target.value)} className={`w-full h-8 rounded text-center text-xs font-bold cursor-pointer ${current.class}`}>
-          <option value="" className="bg-white text-gray-700">-</option>
-          <option value="done" className="bg-green-100 text-green-800">Listo</option>
-          <option value="working" className="bg-orange-100 text-orange-800">En Proceso</option>
-          <option value="stuck" className="bg-red-100 text-red-800">Detenido</option>
-        </select>
-      </div>
-    );
-  }
-
-  if (type === 'date') {
-    return (
-      <div className="h-full p-1">
-        {isAdmin ? (
-          <input type="date" value={value || ''} onChange={(e) => onChange(e.target.value)} className="w-full h-full text-center text-xs text-gray-600 bg-transparent" />
-        ) : (
-          <div className="h-full flex items-center justify-center text-xs text-gray-600">{value || '-'}</div>
-        )}
-      </div>
-    );
-  }
-
-  return isAdmin ? (
-    <input type="text" value={value || ''} onChange={(e) => onChange(e.target.value)} className="w-full h-full px-3 text-sm bg-transparent outline-none focus:bg-blue-50" placeholder="..." />
-  ) : (
-    <div className="w-full h-full px-3 flex items-center text-sm truncate" title={value}>{value}</div>
+function AddButton({ onClick, label }) {
+  return (
+    <button onClick={onClick} className="flex items-center gap-2 px-3 py-2 text-slate-400 hover:text-white hover:bg-slate-800 w-full rounded mt-1 transition-colors border border-dashed border-slate-700 text-xs">
+      <Plus size={12} /> {label}
+    </button>
   );
 }
 
-function CommentDrawer({ row, onClose, onAddComment }) {
-  const [text, setText] = useState("");
-  const endRef = useRef(null);
-  
-  const handleSend = (e) => { e.preventDefault(); if(text.trim()) { onAddComment(text); setText(""); }};
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [row.comments]);
-
+function EmptyState() {
   return (
-    <div className="absolute top-0 right-0 h-full w-96 bg-white shadow-2xl border-l border-gray-200 flex flex-col z-30">
-      <div className="p-4 border-b flex justify-between bg-gray-50">
-        <h3 className="font-bold">Bitácora / Comentarios</h3>
-        <button onClick={onClose}><X size={20} /></button>
+    <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+      <Layout size={48} className="mb-4 text-gray-300" />
+      <p className="text-lg font-medium text-gray-500">Selecciona un elemento del menú</p>
+    </div>
+  );
+}
+
+function Cell({ type, value, rowValues, onChange, isAdmin }) {
+  if (type === 'duration') {
+    const start = rowValues?.['col_start'];
+    const end = rowValues?.['col_end'];
+    let display = "-", bgClass = "bg-gray-50 text-gray-400";
+
+    if (start && end) {
+      const diff = Math.ceil((new Date(end) - new Date(start)) / (86400000));
+      if (diff < 0) { display = "Err"; bgClass = "bg-red-100 text-red-600"; }
+      else { display = `${diff}d`; bgClass = "bg-blue-100 text-blue-700"; }
+    }
+    return <div className="h-full p-2 flex items-center justify-center"><div className={`px-2 py-1 rounded text-xs ${bgClass} font-bold`}>{display}</div></div>;
+  }
+
+  if (['status', 'crm_status'].includes(type)) {
+    const isCrm = type === 'crm_status';
+    const opts = isCrm ? 
+      [{v:'new',l:'Prospecto',c:COLORS.crm.new}, {v:'contacted',l:'Contactado',c:COLORS.crm.contacted}, {v:'won',l:'Cerrado',c:COLORS.crm.won}, {v:'lost',l:'Perdido',c:COLORS.crm.lost}] :
+      [{v:'done',l:'Listo',c:COLORS.status.done}, {v:'working',l:'En Proceso',c:COLORS.status.working}, {v:'stuck',l:'Detenido',c:COLORS.status.stuck}];
+    
+    const curr = opts.find(o => o.v === value) || {l:'-',c:COLORS.status.default};
+
+    if (!isAdmin) return <div className={`m-1 h-8 flex items-center justify-center rounded text-xs font-bold ${curr.c}`}>{curr.l}</div>;
+    return (
+      <div className="p-1 h-full">
+        <select value={value||''} onChange={e=>onChange(e.target.value)} className={`w-full h-8 rounded text-center text-xs font-bold cursor-pointer ${curr.c}`}>
+          <option value="">-</option>
+          {opts.map(o => <option key={o.v} value={o.v} className="bg-white text-black">{o.l}</option>)}
+        </select>
       </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
+    );
+  }
+
+  if (type === 'date') return <div className="h-full p-1">{isAdmin ? <input type="date" value={value||''} onChange={e=>onChange(e.target.value)} className="w-full h-full text-center text-xs bg-transparent"/> : <div className="h-full flex items-center justify-center text-xs">{value||'-'}</div>}</div>;
+
+  return isAdmin ? 
+    <input type="text" value={value||''} onChange={e=>onChange(e.target.value)} className="w-full h-full px-3 text-sm bg-transparent outline-none focus:bg-blue-50" /> : 
+    <div className="w-full h-full px-3 flex items-center text-sm truncate" title={value}>{value}</div>;
+}
+
+function CommentDrawer({ row, onClose, onSend }) {
+  const [txt, setTxt] = useState("");
+  const endRef = useRef(null);
+  useEffect(() => endRef.current?.scrollIntoView({behavior:"smooth"}), [row.comments]);
+  
+  return (
+    <div className="w-80 border-l border-gray-200 bg-white flex flex-col shadow-xl z-30">
+      <div className="p-4 border-b flex justify-between bg-gray-50"><h3 className="font-bold">Bitácora</h3><button onClick={onClose}><X size={18}/></button></div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {row.comments?.map(c => (
-          <div key={c.id} className="bg-gray-100 p-3 rounded text-sm">
+          <div key={c.id} className="bg-slate-50 p-3 rounded text-sm border border-slate-100">
             <div className="flex justify-between mb-1"><span className="font-bold text-xs text-blue-600">{c.author}</span><span className="text-[10px] text-gray-400">{new Date(c.timestamp).toLocaleString()}</span></div>
             {c.text}
           </div>
         ))}
         <div ref={endRef} />
       </div>
-      <form onSubmit={handleSend} className="p-4 border-t bg-gray-50 flex gap-2">
-        <input value={text} onChange={e=>setText(e.target.value)} className="flex-1 border p-2 rounded text-sm" placeholder="Escribir..." />
+      <form onSubmit={e => { e.preventDefault(); if(txt.trim()){onSend(txt); setTxt("")} }} className="p-3 border-t bg-gray-50 flex gap-2">
+        <input value={txt} onChange={e=>setTxt(e.target.value)} className="flex-1 border p-2 rounded text-sm" placeholder="Comentar..." />
         <button type="submit" className="bg-blue-600 text-white p-2 rounded"><Send size={16}/></button>
       </form>
     </div>
   );
 }
+
+function ConfigInstructions() { return <div className="h-screen flex items-center justify-center bg-slate-900 text-white">Configura tus claves de Firebase en el código.</div>; }
