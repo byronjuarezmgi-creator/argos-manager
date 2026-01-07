@@ -9,7 +9,7 @@ import {
 } from 'firebase/auth';
 import { 
   Plus, MessageSquare, Trash2, Layout, 
-  User, X, Send, Database, AlertCircle, Settings, Lock, Unlock, Clock, Briefcase, Users
+  User, X, Send, Database, AlertCircle, Settings, Lock, Unlock, Clock, Briefcase, Users, LogIn, LogOut
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN DE FIREBASE ---
@@ -68,8 +68,9 @@ export default function App() {
   const [boards, setBoards] = useState([]);
   const [activeBoardId, setActiveBoardId] = useState(null);
   
-  // false = Cliente, true = Admin
-  const [isAdmin, setIsAdmin] = useState(false); 
+  // ESTADOS DE USUARIO
+  const [isAdmin, setIsAdmin] = useState(false); // Controla si puede editar
+  const [currentUserName, setCurrentUserName] = useState("Visita"); // Controla el nombre en comentarios
   
   // Estado para saber qué sección vemos: 'projects' o 'crm'
   const [activeSection, setActiveSection] = useState('projects'); 
@@ -95,13 +96,12 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // --- CARGA DE DATOS (CORREGIDO EL BUG DEL SALTO) ---
+  // --- CARGA DE DATOS ---
   useEffect(() => {
     if (!user || !db) return;
 
     const q = collection(db, 'argos_data', appId, 'boards');
     
-    // Variable local para controlar ÚNICAMENTE la carga inicial
     let isFirstLoad = true;
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -109,15 +109,9 @@ export default function App() {
       loadedBoards.sort((a, b) => a.createdAt - b.createdAt);
       setBoards(loadedBoards);
       
-      // CORRECCIÓN: Usamos isFirstLoad para asegurarnos de que solo cambiamos 
-      // el tablero activo AUTOMÁTICAMENTE la primera vez que entras a la app.
-      // Si escribes y se actualiza la base de datos, esto se saltará, manteniendo tu selección.
       if (isFirstLoad && loadedBoards.length > 0) {
-        // Intentar buscar uno del tipo proyecto por defecto
         const firstRelevant = loadedBoards.find(b => b.type !== 'crm') || loadedBoards[0];
         if (firstRelevant) setActiveBoardId(firstRelevant.id);
-        
-        // Marcamos que ya hicimos la carga inicial
         isFirstLoad = false;
       }
       
@@ -131,17 +125,27 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // --- SEGURIDAD ---
-  const handleRoleSwitch = () => {
-    if (isAdmin) {
+  // --- GESTIÓN DE SESIÓN (LOGIN) ---
+  const handleLogin = () => {
+    // Si ya está logueado (No es Visita), cerramos sesión
+    if (currentUserName !== "Visita") {
       setIsAdmin(false);
+      setCurrentUserName("Visita");
+      return;
+    }
+
+    const password = prompt("🔐 Ingrese su contraseña de acceso:");
+    if (!password) return;
+
+    // LÓGICA DE USUARIOS
+    if (password === "argos2024") { 
+      setIsAdmin(true);
+      setCurrentUserName("Byron Juárez");
+    } else if (password === "Argos2026*") {
+      setIsAdmin(false); // José solo lectura
+      setCurrentUserName("José Samayoa");
     } else {
-      const password = prompt("🔐 Ingrese la contraseña de Administrador:");
-      if (password === "argos2024") { 
-        setIsAdmin(true);
-      } else {
-        if (password !== null) alert("⛔ Contraseña incorrecta");
-      }
+      alert("⛔ Contraseña incorrecta");
     }
   };
 
@@ -154,7 +158,6 @@ export default function App() {
     let columns = [];
 
     if (type === 'crm') {
-      // Columnas específicas para CRM
       columns = [
         { id: 'col_client', title: 'Cliente / Empresa', type: 'text', width: 'w-1/3' },
         { id: 'col_status', title: 'Estatus Venta', type: 'crm_status', width: 'w-32' },
@@ -164,7 +167,6 @@ export default function App() {
         { id: 'col_next', title: 'Siguiente Paso', type: 'text', width: 'w-40' },
       ];
     } else {
-      // Columnas para Proyectos
       columns = [
         { id: 'col_item', title: 'Tarea / Elemento', type: 'text', width: 'w-1/3' },
         { id: 'col_status', title: 'Estado', type: 'status', width: 'w-32' },
@@ -177,7 +179,7 @@ export default function App() {
 
     const newBoard = {
       title,
-      type, // 'project' o 'crm'
+      type,
       createdAt: Date.now(),
       columns,
       rows: [] 
@@ -185,7 +187,6 @@ export default function App() {
 
     try {
       const docRef = await addDoc(collection(db, 'argos_data', appId, 'boards'), newBoard);
-      // Opcional: Cambiar automáticamente al nuevo tablero creado
       setActiveBoardId(docRef.id);
       if(type === 'crm') setActiveSection('crm');
       else setActiveSection('projects');
@@ -200,7 +201,7 @@ export default function App() {
     if (activeBoardId === boardId) setActiveBoardId(null);
   };
 
-  // --- GESTIÓN DE FILAS (ACTUALIZACIÓN) ---
+  // --- GESTIÓN DE FILAS ---
   const updateBoardData = async (boardId, newData) => {
     if (!user) return;
     const boardRef = doc(db, 'argos_data', appId, 'boards', boardId);
@@ -222,7 +223,6 @@ export default function App() {
   };
 
   const updateCellValue = async (board, rowId, colId, value) => {
-    // Actualización optimista o directa
     const updatedRows = board.rows.map(row => {
       if (row.id === rowId) {
         return { ...row, values: { ...row.values, [colId]: value } };
@@ -238,7 +238,7 @@ export default function App() {
         const newComment = {
           id: generateId(),
           text,
-          author: isAdmin ? "Administrador" : "Cliente",
+          author: currentUserName, // USAMOS EL NOMBRE DEL USUARIO ACTUAL
           timestamp: Date.now()
         };
         return { ...row, comments: [...(row.comments || []), newComment] };
@@ -248,10 +248,8 @@ export default function App() {
     await updateBoardData(board.id, { rows: updatedRows });
   };
 
-  // Filtrar tableros según la sección activa
   const projectBoards = boards.filter(b => b.type !== 'crm');
   const crmBoards = boards.filter(b => b.type === 'crm');
-  
   const activeBoard = boards.find(b => b.id === activeBoardId);
 
   // --- RENDERIZADO ---
@@ -367,17 +365,17 @@ export default function App() {
 
         <div className="p-4 bg-slate-950 border-t border-slate-800">
           <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span>Modo:</span>
+            <span>Usuario:</span>
             <span className={isAdmin ? 'text-green-400 font-bold' : 'text-blue-400 font-bold'}>
-              {isAdmin ? 'ADMIN' : 'VISITA'}
+              {currentUserName}
             </span>
           </div>
           <button 
-            onClick={handleRoleSwitch}
-            className={`w-full flex items-center justify-center gap-2 py-2 rounded text-xs transition-colors text-white ${isAdmin ? 'bg-red-900 hover:bg-red-800' : 'bg-slate-800 hover:bg-slate-700'}`}
+            onClick={handleLogin}
+            className={`w-full flex items-center justify-center gap-2 py-2 rounded text-xs transition-colors text-white ${currentUserName !== 'Visita' ? 'bg-slate-700 hover:bg-slate-600' : 'bg-blue-600 hover:bg-blue-500'}`}
           >
-            {isAdmin ? <Unlock size={12} /> : <Lock size={12} />}
-            {isAdmin ? 'Salir de Admin' : 'Entrar como Admin'}
+            {currentUserName !== 'Visita' ? <LogOut size={12} /> : <LogIn size={12} />}
+            {currentUserName !== 'Visita' ? 'Cerrar Sesión' : 'Iniciar Sesión'}
           </button>
         </div>
       </div>
